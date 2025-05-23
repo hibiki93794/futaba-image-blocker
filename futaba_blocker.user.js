@@ -13,6 +13,8 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @connect      *
+// @downloadURL  https://github.com/hibiki93794/futaba-image-blocker/raw/refs/heads/main/futaba_blocker.user.js
+// @updateURL    https://github.com/hibiki93794/futaba-image-blocker/raw/refs/heads/main/futaba_blocker.user.js
 // ==/UserScript==
 
 (function() {
