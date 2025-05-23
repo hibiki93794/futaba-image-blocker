@@ -1,0 +1,225 @@
+// ==UserScript==
+// @name         不快画像ブロッカー (ふたばちゃんねる用)
+// @namespace    http://tampermonkey.net/
+// @version      0.4.6 // バージョン番号のみ更新
+// @description  ふたばちゃんねる上の不快な画像を知覚ハッシュで判定し、そのレス全体を非表示にします。(本文取得テスト追加)
+// @author       You // としあき
+// @match        http://*.2chan.net/*/futaba.htm*
+// @match        https://*.2chan.net/*/futaba.htm*
+// @match        http://*.2chan.net/*/res/*.htm*
+// @match        https://*.2chan.net/*/res/*.htm*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @connect      *
+// @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME/main/YOUR_SCRIPT_FILENAME.user.js
+// @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME/main/YOUR_SCRIPT_FILENAME.user.js
+// @license      MIT // ふたば☆ちゃんねるのMAYで開発配布したものであり、としあきならコードの利用、変更、再配布、商用利用許可します。
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // --- 設定値 ---
+    const BLOCKED_HASHES_KEY = 'futabaChan_blockedImageHashes_v1_postBlock'; // v0.4.4と同じキー名
+    const SIMILARITY_THRESHOLD = 6;
+    const DHASH_SIZE = 8;
+
+    let blockedImageHashes = GM_getValue(BLOCKED_HASHES_KEY, []);
+    let processingImages = new Set(); // v0.4.4 と同じ変数名
+
+    // --- dHash 計算関数 (calculateDHash) ---
+    async function calculateDHash(imageUrl) { /* v0.4.4 と同じ */
+        if (!imageUrl || imageUrl.startsWith('data:')) { return null; }
+        if (processingImages.has(imageUrl)) { return null; }
+        processingImages.add(imageUrl);
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET', url: imageUrl, responseType: 'blob', timeout: 15000,
+                onload: function(response) {
+                    if (response.status !== 200 && response.status !== 0) { processingImages.delete(imageUrl); return reject(new Error(`画像の取得に失敗: ${response.status} ${imageUrl}`)); }
+                    const img = new Image(); img.crossOrigin = "anonymous";
+                    img.onload = () => {
+                        try {
+                            const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
+                            const width = DHASH_SIZE + 1; const height = DHASH_SIZE; canvas.width = width; canvas.height = height;
+                            ctx.drawImage(img, 0, 0, width, height);
+                            const imageData = ctx.getImageData(0, 0, width, height); const grayPixels = [];
+                            for (let i = 0; i < imageData.data.length; i += 4) { const r = imageData.data[i], g = imageData.data[i+1], b = imageData.data[i+2]; grayPixels.push(0.299 * r + 0.587 * g + 0.114 * b); }
+                            let hash = '';
+                            for (let y = 0; y < height; y++) { for (let x = 0; x < width - 1; x++) { const l = y * width + x, r_idx = y * width + x + 1; if (grayPixels[l] > grayPixels[r_idx]) hash += '1'; else hash += '0'; } }
+                            resolve(hash);
+                        } catch (e) { reject(new Error(`dHash計算中のエラー: ${e.message} for ${imageUrl}`)); }
+                        finally { if(img.src.startsWith('blob:')) URL.revokeObjectURL(img.src); processingImages.delete(imageUrl); }
+                    };
+                    img.onerror = () => { if(img.src.startsWith('blob:')) URL.revokeObjectURL(img.src); processingImages.delete(imageUrl); reject(new Error(`画像の読み込みに失敗 (img.onerror): ${imageUrl}`)); };
+                    if (response.response instanceof Blob && response.response.size > 0) img.src = URL.createObjectURL(response.response);
+                    else { processingImages.delete(imageUrl); reject(new Error(`受信した画像データが無効です (Blobでないかサイズ0): ${imageUrl}`)); }
+                },
+                onerror: (error) => { processingImages.delete(imageUrl); reject(new Error(`GM_xmlhttpRequestエラー: ${error.statusText || '不明'} for ${imageUrl}`)); },
+                ontimeout: () => { processingImages.delete(imageUrl); reject(new Error(`GM_xmlhttpRequestタイムアウト: ${imageUrl}`)); }
+            });
+        });
+    }
+
+    // --- ハミング距離計算関数 (hammingDistance) ---
+    function hammingDistance(hash1, hash2) { /* v0.4.4 と同じ */
+        if (!hash1 || !h2 || hash1.length !== hash2.length) { return Infinity; }
+        let distance = 0;
+        for (let i = 0; i < hash1.length; i++) { if (hash1[i] !== h2[i]) { distance++; } }
+        return distance;
+    }
+
+    // --- 画像処理関数 (processImageElement) ---
+    async function processImageElement(imgElement) {
+        if (!imgElement || !imgElement.src || imgElement.classList.contains('futaba-image-processed') || !imgElement.closest('body')) {
+            return;
+        }
+
+        // ▼▼▼ 本文取得テスト (v0.4.5 で追加した部分) ▼▼▼
+        const postRowForText = imgElement.closest('tr');
+        if (postRowForText) {
+            const blockquote = postRowForText.querySelector('blockquote');
+            if (blockquote && blockquote.textContent) {
+                let resNoText = "";
+                const checkbox = postRowForText.querySelector('input[type="checkbox"]');
+                if (checkbox && checkbox.name) {
+                    resNoText = `レス ${checkbox.name} `;
+                }
+                console.log(`[ブロッカー v0.4.6] ${resNoText}の本文(一部): 「${blockquote.textContent.substring(0, 50).replace(/\n/g, "↵")}...」`);
+            }
+        }
+        // ▲▲▲ 本文取得テストここまで ▲▲▲
+
+        const postProcessedClass = 'futaba-post-processed-by-blocker'; // v0.4.4と同じクラス名
+        const parentPostElement = imgElement.closest('tr') || imgElement.closest('td'); // v0.4.4と同じ
+        if (parentPostElement && parentPostElement.classList.contains(postProcessedClass)) {
+            imgElement.classList.add('futaba-image-processed');
+            return;
+        }
+
+        imgElement.classList.add('futaba-image-processed');
+        const imageUrl = imgElement.src;
+        let effectiveImageUrl = imageUrl;
+
+        if (imgElement.parentNode && imgElement.parentNode.tagName === 'A' && imgElement.parentNode.href) {
+            const linkUrl = new URL(imgElement.parentNode.href, document.baseURI).href;
+            if (/\.(jpe?g|png|gif|webp)$/i.test(linkUrl) && !linkUrl.includes('futaba.htm') && !linkUrl.includes('/res/')) {
+                 effectiveImageUrl = linkUrl;
+            }
+        }
+
+        try {
+            const currentHash = await calculateDHash(effectiveImageUrl);
+            if (!currentHash) {
+                imgElement.classList.remove('futaba-image-processed');
+                return;
+            }
+
+            for (const blockedHash of blockedImageHashes) {
+                const distance = hammingDistance(currentHash, blockedHash);
+                if (distance <= SIMILARITY_THRESHOLD) {
+                    const postRow = imgElement.closest('tr');
+                    if (postRow && !postRow.classList.contains(postProcessedClass)) {
+                        postRow.style.display = 'none';
+                        postRow.classList.add(postProcessedClass);
+
+                        let resNoText = "";
+                        const checkbox = postRow.querySelector('input[type="checkbox"]');
+                        if (checkbox && checkbox.name) {
+                            resNoText = `レス ${checkbox.name} `;
+                        }
+                        console.log(`%c[ブロッカー v0.4.6]%c ${resNoText}の内容を非表示 (不快画像を検出、距離: ${distance})。画像URL: ${imageUrl} (ハッシュ元: ${effectiveImageUrl.substring(0,60)}...)`, "color:orange;font-weight:bold;", "color:default;");
+
+                        const placeholderRow = document.createElement('tr');
+                        placeholderRow.classList.add(postProcessedClass);
+                        const placeholderCell = document.createElement('td');
+                        const originalCell = postRow.querySelector('td');
+                        if (originalCell) {
+                             placeholderCell.className = originalCell.className;
+                             let totalColspan = Array.from(postRow.cells).reduce((sum, cell) => sum + cell.colSpan, 0);
+                             placeholderCell.colSpan = totalColspan > 0 ? totalColspan : 1;
+                        }
+                        const placeholderText = document.createElement('span');
+                        placeholderText.textContent = ``;
+                        placeholderText.style.cssText = "color: gray; font-size: small; font-style: italic;";
+                        placeholderCell.appendChild(placeholderText);
+                        placeholderRow.appendChild(placeholderCell);
+                        if (postRow.parentNode) {
+                            postRow.parentNode.insertBefore(placeholderRow, postRow.nextSibling);
+                        }
+                    } else if (!postRow) {
+                        console.log(`%c[ブロッカー v0.4.6]%c 類似画像 (距離: ${distance}) を検出。画像のみ非表示: ${imageUrl} (trが見つからず)`, "color:orange;font-weight:bold;", "color:default;");
+                        imgElement.style.display = 'none';
+                    }
+                    return;
+                }
+            }
+        } catch (error) {
+            console.warn(`[ブロッカー v0.4.6] 画像処理エラー: ${error.message}`, `(対象URL: ${effectiveImageUrl})`);
+            imgElement.classList.remove('futaba-image-processed');
+        }
+    }
+
+    // --- メイン処理 (scanImagesInNode, Observerなど) ---
+    // v0.4.4 と同じ
+    function scanImagesInNode(parentNode) {
+        if (!parentNode || !parentNode.querySelectorAll) return;
+        parentNode.querySelectorAll('img:not(.futaba-image-processed)').forEach(img => {
+            const parentPostElement = img.closest('tr') || img.closest('td');
+            if (parentPostElement && parentPostElement.classList.contains('futaba-post-processed-by-blocker')) {
+                img.classList.add('futaba-image-processed');
+                return;
+            }
+            if (img.src && !img.closest('a[href*="javascript:void"]')) {
+                if (img.complete || img.naturalWidth > 0) {
+                    setTimeout(() => processImageElement(img), 0);
+                } else {
+                    img.addEventListener('load', () => setTimeout(() => processImageElement(img), 0), { once: true });
+                    img.addEventListener('error', () => img.classList.add('futaba-image-processed'), { once: true });
+                }
+            } else {
+                img.classList.add('futaba-image-processed');
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => { if(document.body) scanImagesInNode(document.body); });
+    } else {
+        if(document.body) scanImagesInNode(document.body);
+    }
+
+    const observer = new MutationObserver((mutationsList) => {
+        for (const mutation of mutationsList) {
+            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        if ((node.tagName === 'TR' || node.tagName === 'TD') && node.classList && node.classList.contains('futaba-post-processed-by-blocker')) {
+                            if (node.querySelectorAll) node.querySelectorAll('img:not(.futaba-image-processed)').forEach(img => img.classList.add('futaba-image-processed'));
+                            return;
+                        }
+                        if (node.querySelectorAll) scanImagesInNode(node);
+                        else if (node.tagName === 'IMG') scanImagesInNode(node.parentNode);
+                    }
+                });
+            }
+        }
+    });
+    if (document.body) { observer.observe(document.body, { childList: true, subtree: true }); }
+    else { document.addEventListener('DOMContentLoaded', () => { if(document.body) observer.observe(document.body, { childList: true, subtree: true }); });}
+
+
+    // --- 右クリックメニュー関連 ---
+    // v0.4.4 と同じ (processImageElement を呼び出す)
+    let lastHoveredImageElement = null;
+    document.addEventListener('mouseover', function(event) { if (event.target && event.target.tagName === 'IMG') { lastHoveredImageElement = event.target; } }, true);
+
+    GM_registerMenuCommand("■ この画像を不快登録", async () => { /* v0.4.4 と同じ */ if (lastHoveredImageElement && lastHoveredImageElement.src && lastHoveredImageElement.closest('body')) { const imgToBlock = lastHoveredImageElement; const originalSrc = imgToBlock.src; alert(`以下の画像のハッシュを登録試行します:\n${originalSrc.substring(0,100)}${originalSrc.length > 100 ? '...' : ''}\n\n※サムネイルの場合、リンク先の元画像が優先。\n登録後、この画像を含むレス全体が非表示対象になります。`); let imageToHashUrl = originalSrc; if (imgToBlock.parentNode && imgToBlock.parentNode.tagName === 'A' && imgToBlock.parentNode.href) { const linkUrl = new URL(imgToBlock.parentNode.href, document.baseURI).href; if (/\.(jpe?g|png|gif|webp)$/i.test(linkUrl) && !linkUrl.includes('futaba.htm') && !linkUrl.includes('/res/')) { imageToHashUrl = linkUrl; console.log(`%c[ブロッカー v0.4.6]%c 登録時: サムネイル ${originalSrc.substring(0,60)}... の代わりにリンク先 ${imageToHashUrl.substring(0,60)}... を使用`, "color:orange;font-weight:bold;", "color:default;"); } } try { const hash = await calculateDHash(imageToHashUrl); if (hash) { if (!blockedImageHashes.includes(hash)) { blockedImageHashes.push(hash); GM_setValue(BLOCKED_HASHES_KEY, blockedImageHashes); alert(`ハッシュ [${hash.substring(0,16)}...] を登録しました。\nこの画像および類似画像を含むレスは今後非表示になります。\n(対象: ${imageToHashUrl.substring(0,80)}...)`); const postRowToProcess = imgToBlock.closest('tr'); if (postRowToProcess) { if (postRowToProcess.classList.contains('futaba-post-processed-by-blocker')) { postRowToProcess.classList.remove('futaba-post-processed-by-blocker'); postRowToProcess.style.display = ''; const nextSibling = postRowToProcess.nextSibling; if (nextSibling && nextSibling.classList && nextSibling.classList.contains('futaba-post-processed-by-blocker')) { nextSibling.remove(); } } imgToBlock.classList.remove('futaba-image-processed'); await processImageElement(imgToBlock); } } else { alert(`この画像 (または類似画像) のハッシュ [${hash.substring(0,16)}...] は既に登録されています。`); } } else { alert('画像のハッシュ計算に失敗しました。画像が読み込めないか、対応していない形式の可能性があります。'); } } catch (error) { alert('ハッシュ登録中にエラーが発生しました: ' + error.message); console.error("[ブロッカー v0.4.6] ハッシュ登録エラー:", error); } } else { alert('画像の上にマウスカーソルを合わせてから、Tampermonkeyの拡張機能アイコンをクリックし、このメニューを選択してください。'); } lastHoveredImageElement = null; });
+    GM_registerMenuCommand("■ 登録済み不快画像ハッシュを全てクリア", () => { /* v0.4.4と同じ */ if (confirm("本当に登録されている不快画像のハッシュを全てクリアしますか？\nこの操作は元に戻せません。")) { blockedImageHashes = []; GM_setValue(BLOCKED_HASHES_KEY, []); alert("登録済みハッシュを全てクリアしました。\nページを再読み込みすると、ブロックされていた画像が表示されるようになります。"); } });
+    GM_registerMenuCommand("■ 現在のブロックハッシュ数を確認", () => { /* v0.4.4と同じ */ alert(`現在 ${blockedImageHashes.length} 件のハッシュがブロックリストに登録されています。`); });
+
+    console.log('%c[不快画像ブロッカー (ふたばちゃんねる用 v0.4.6)]%c が動作を開始。テキスト取得準備版。', "color:orange;font-weight:bold;", "color:default;");
+
+})();
