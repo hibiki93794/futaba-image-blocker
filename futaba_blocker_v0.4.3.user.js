@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         不快画像ブロッカー (ふたばちゃんねる用)
 // @namespace    http://tampermonkey.net/
-// @version      0.4
+// @version      0.4.3
 // @description  ふたばちゃんねる上の不快な画像を知覚ハッシュで判定し、そのレス全体を非表示にします
 // @author       You // としあき
 // @match        http://*.2chan.net/*/futaba.htm*
