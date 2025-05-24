@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         futaba-ng-filter
 // @namespace    https://example.com/
+// @author       You // としあき「」
 // @version      0.0.1
 // @description  【テスト版】コピペ連投（30秒以内に同文が3回）だけNG。最初の投稿は常に許容。ｷﾀ━━━も除外。
 // @match        https://*.2chan.net/*
 // @run-at       document-end
 // @grant        none
-// @license      MIT
+// @license      MIT // ふたば☆ちゃんねるで開発配布したものであり、としあきや「」ならコードの利用、変更、再配布、商用利用許可します。
 // ==/UserScript==
 
 (function () {
