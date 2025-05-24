@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.0.0
 // @description  ふたばちゃんねる上の不快な画像を知覚ハッシュで判定し、そのレス全体を非表示にします
-// @author       You // としあき
+// @author       You // としあき「」
 // @match        http://*.2chan.net/*/futaba.htm*
 // @match        https://*.2chan.net/*/futaba.htm*
 // @match        http://*.2chan.net/*/res/*.htm*
@@ -15,7 +15,7 @@
 // @connect      *
 // @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME/main/YOUR_SCRIPT_FILENAME.user.js
 // @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME/main/YOUR_SCRIPT_FILENAME.user.js
-// @license      MIT // ふたば☆ちゃんねるのMAYで開発配布したものであり、としあきならコードの利用、変更、再配布、商用利用許可します。
+// @license      MIT // ふたば☆ちゃんねるで開発配布したものであり、としあきや「」ならコードの利用、変更、再配布、商用利用許可します。
 // ==/UserScript==
 
 (function() {
